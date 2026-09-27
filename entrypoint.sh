@@ -1,6 +1,7 @@
 #!/bin/bash
 
-echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-15-QINGLONG-2.21.0-DEBIAN-RENDER-FINAL-V8 🔥🔥🔥"
+echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-RENDER-FINAL-V9 🔥🔥🔥"
+# 🔧 修改：版本号更新为 V9
 
 
 set -e
@@ -106,19 +107,19 @@ fi
 
 
 ################################################
-# Render PORT
+# Platform PORT
 ################################################
-
 
 echo
 
-echo "Render PORT=$PORT"
+echo "Platform PORT=$PORT"
+# 🔧 修改：原来的 "Render PORT=$PORT" 改成平台无关的写法
 
 
 
 if [ -z "$PORT" ]; then
 
-    echo "❌ Render PORT不存在"
+    echo "❌ Platform PORT不存在"
 
     exit 1
 
@@ -130,20 +131,24 @@ fi
 
 
 ################################################
-# 固定青龙端口
+# 固定青龙内部端口
 ################################################
 
+# 🔧 修改：
+# QingLong 不再使用平台 PORT。
+# 平台 PORT 留给 nginx。
+# QingLong 固定使用 5800，避免与 Blitz / Render 的 PORT 冲突。
 
 if [ -f "$QL_DIR/.env" ]; then
 
 
     sed -i \
-    "s/^PORT=.*/PORT=5700/" \
+    "s/^PORT=.*/PORT=5800/" \
     "$QL_DIR/.env"
 
 
 
-    echo "✔ 青龙固定端口5700"
+    echo "✔ 青龙固定内部端口 5800"
 
 
 
@@ -185,7 +190,7 @@ do
 
 
     if curl -sf \
-    http://127.0.0.1:5700/api/health \
+    http://127.0.0.1:5800/api/health \
     >/dev/null 2>&1
 
     then
@@ -233,7 +238,7 @@ if [ -f /etc/nginx/conf.d/front.conf ]; then
 
 
 
-    echo "✔ nginx PORT替换完成"
+    echo "✔ nginx Platform PORT替换完成"
 
 
 
@@ -281,7 +286,7 @@ echo "########## 初始化管理员 ##########"
 
 
 curl -s \
-"http://127.0.0.1:5700/api/user/init?t=$(date +%s)" \
+"http://127.0.0.1:5800/api/user/init?t=$(date +%s)" \
 -X PUT \
 -H "Content-Type: application/json;charset=UTF-8" \
 --data \
@@ -435,9 +440,8 @@ echo "########## 端口检测 ##########"
 
 
 (ss -tlnp 2>/dev/null || true) \
-| grep -E "5700|$PORT" || true
-
-
+| grep -E "5800|$PORT" || true
+# 🔧 修改：这里检测 QingLong 5800，不再检测固定的 5700
 
 
 
@@ -451,6 +455,6 @@ echo "================================"
 
 
 
-# 保持Render容器运行
+# 保持容器运行
 
 tail -f /dev/null
