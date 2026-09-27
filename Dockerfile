@@ -1,4 +1,4 @@
-FROM ghcr.io/whyour/qinglong:2.21.0-debian
+FROM whyour/qinglong:2.22.0-debian
 
 
 LABEL maintainer="winijesen"
@@ -10,18 +10,19 @@ USER root
 
 # ==================================================
 # 安装扩展组件
-# nginx
+#
 # sshpass
-# envsubst
 # jq
+# curl
+# wget
+# git
+# openssh-client
 # 网络工具
 # ==================================================
 
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
-    nginx \
     sshpass \
-    gettext-base \
     jq \
     curl \
     wget \
@@ -39,49 +40,11 @@ RUN apt-get update && \
 
 # ==================================================
 # 安装最新版 rclone
-# 官方安装脚本
-# 自动下载 + 解压 + 安装
 # ==================================================
 
 RUN curl https://rclone.org/install.sh | bash && \
     rclone version && \
     sshpass -V
-
-
-
-# ==================================================
-# nginx 配置
-# ==================================================
-
-RUN rm -f /etc/nginx/conf.d/default.conf && \
-    rm -f /etc/nginx/sites-enabled/default && \
-    mkdir -p /var/log/nginx
-
-
-
-COPY front.conf /etc/nginx/conf.d/front.conf
-
-
-
-# ==================================================
-# 通知脚本
-# ==================================================
-
-COPY notify.py /notify.py
-
-
-RUN chmod 755 /notify.py
-
-
-
-# ==================================================
-# 自定义启动入口
-# ==================================================
-
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-
-
-RUN chmod 755 /usr/local/bin/entrypoint.sh
 
 
 
@@ -103,25 +66,6 @@ WORKDIR /ql
 
 
 # ==================================================
-# 保持 root
-# QingLong PM2 + nginx 需要
-# ==================================================
-
-USER root
-
-
-
-# ==================================================
-# Render
-# 实际监听由 nginx 使用 $PORT
-# EXPOSE 不决定 Render 端口
-# ==================================================
-
-EXPOSE 80
-
-
-
-# ==================================================
 # 数据目录
 # ==================================================
 
@@ -130,7 +74,26 @@ VOLUME ["/ql/data"]
 
 
 # ==================================================
-# 启动
+# 自定义启动入口
 # ==================================================
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+
+RUN chmod 755 /usr/local/bin/entrypoint.sh
+
+
+
+# ==================================================
+# Blitz 使用青龙端口
+# ==================================================
+
+EXPOSE 5700
+
+
+
+USER root
+
+
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
