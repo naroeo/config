@@ -1,12 +1,20 @@
-FROM ghcr.io/whyour/qinglong:2.22.0-debian
+FROM ghcr.io/whyour/qinglong:2.21.0-debian
+
 
 LABEL maintainer="winijesen"
+
 
 USER root
 
 
+
 # ==================================================
-# 基础扩展组件
+# 安装扩展组件
+# nginx
+# sshpass
+# envsubst
+# jq
+# 网络工具
 # ==================================================
 
 RUN apt-get update && \
@@ -28,13 +36,17 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 
+
 # ==================================================
-# rclone
+# 安装最新版 rclone
+# 官方安装脚本
+# 自动下载 + 解压 + 安装
 # ==================================================
 
 RUN curl https://rclone.org/install.sh | bash && \
     rclone version && \
     sshpass -V
+
 
 
 # ==================================================
@@ -45,7 +57,10 @@ RUN rm -f /etc/nginx/conf.d/default.conf && \
     rm -f /etc/nginx/sites-enabled/default && \
     mkdir -p /var/log/nginx
 
+
+
 COPY front.conf /etc/nginx/conf.d/front.conf
+
 
 
 # ==================================================
@@ -54,7 +69,9 @@ COPY front.conf /etc/nginx/conf.d/front.conf
 
 COPY notify.py /notify.py
 
+
 RUN chmod 755 /notify.py
+
 
 
 # ==================================================
@@ -63,7 +80,9 @@ RUN chmod 755 /notify.py
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
+
 RUN chmod 755 /usr/local/bin/entrypoint.sh
+
 
 
 # ==================================================
@@ -74,32 +93,40 @@ RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
 
+
 # ==================================================
 # 工作目录
 # ==================================================
 
 WORKDIR /ql
 
-USER root
 
 
 # ==================================================
-# Render / beta.blitz
-#
-# 注意：
-# EXPOSE 不决定平台 PORT。
-# 实际外部端口由环境变量 $PORT 决定，
-# nginx 监听 $PORT。
+# 保持 root
+# QingLong PM2 + nginx 需要
+# ==================================================
+
+USER root
+
+
+
+# ==================================================
+# Render
+# 实际监听由 nginx 使用 $PORT
+# EXPOSE 不决定 Render 端口
 # ==================================================
 
 EXPOSE 80
 
 
+
 # ==================================================
-# QingLong 数据
+# 数据目录
 # ==================================================
 
 VOLUME ["/ql/data"]
+
 
 
 # ==================================================
