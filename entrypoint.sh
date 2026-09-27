@@ -1,21 +1,13 @@
 #!/bin/bash
 
-echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-BLITZ-DIAGNOSTIC-V11 🔥🔥🔥"
-# 🔧 V11：
-# 1. 全面检查 QingLong / PM2 / nginx / 端口
-# 2. QingLong 固定内部端口 5600
-# 3. 平台 PORT 只给 nginx
-# 4. 检查谁占用 5600 / 5700
-# 5. 检查 PM2 实际进程
-# 6. 检查 QingLong 实际监听端口
-# 7. 检查 nginx 最终配置
-# 8. 防止 nginx 残留进程导致重复 bind
-# 9. QingLong 健康检查失败时输出完整诊断
-# 10. 不再静默吞掉关键启动错误
+echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-BLITZ-V12 🔥🔥🔥"
+
+set -Eeuo pipefail
 
 
-set -e
-
+################################################
+# PATH
+################################################
 
 export PATH="$HOME/bin:$PATH"
 
@@ -24,13 +16,69 @@ export PATH="$HOME/bin:$PATH"
 # 基础变量
 ################################################
 
-QL_DIR=${QL_DIR:-/ql}
+QL_DIR="${QL_DIR:-/ql}"
 
 dir_shell="$QL_DIR/shell"
 
-# 🔧 V11：QingLong 内部固定端口
-QL_INTERNAL_PORT=5600
+# =================================================
+# 非常重要：
+#
+# beta.blitz / Render 的 PORT：
+#   给 nginx
+#
+# QingLong：
+#   永远使用 5600
+#
+# GRPC：
+#   使用 5500
+# =================================================
 
+QL_INTERNAL_PORT=5600
+QL_GRPC_PORT=5500
+
+PLATFORM_PORT="${PORT:-}"
+
+
+################################################
+# 错误处理
+################################################
+
+trap '
+echo
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "❌ ENTRYPOINT 异常退出"
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "line=$LINENO"
+echo "command=$BASH_COMMAND"
+echo "exit_code=$?"
+echo
+
+echo "========== PM2 =========="
+pm2 status 2>&1 || true
+
+echo
+echo "========== PM2 qinglong =========="
+pm2 show qinglong 2>&1 || true
+
+echo
+echo "========== PM2 logs =========="
+pm2 logs qinglong --lines 200 --nostream 2>&1 || true
+
+echo
+echo "========== processes =========="
+ps aux 2>&1 || true
+
+echo
+echo "========== ports =========="
+ss -ltnp 2>&1 || true
+
+exit 1
+' ERR
+
+
+################################################
+# 基础信息
+################################################
 
 echo
 echo "=============================================="
@@ -40,14 +88,28 @@ echo "=============================================="
 echo "HOME=$HOME"
 echo "USER=$(whoami)"
 echo "QL_DIR=$QL_DIR"
-echo "QL_INTERNAL_PORT=$QL_INTERNAL_PORT"
-echo "PLATFORM_PORT=$PORT"
-
-
+echo "QingLong internal port=$QL_INTERNAL_PORT"
+echo "QingLong gRPC port=$QL_GRPC_PORT"
+echo "Platform PORT=$PLATFORM_PORT"
 
 
 ################################################
-# 基础环境检查
+# Platform PORT 检查
+################################################
+
+if [ -z "$PLATFORM_PORT" ]; then
+
+    echo
+    echo "❌ PORT 不存在"
+    echo "beta.blitz / Render 必须提供 PORT"
+
+    exit 1
+
+fi
+
+
+################################################
+# 基础程序
 ################################################
 
 echo
@@ -55,45 +117,83 @@ echo "=============================================="
 echo "基础程序检查"
 echo "=============================================="
 
-
+echo
 echo "bash:"
 bash --version | head -1 || true
-
 
 echo
 echo "node:"
 node -v || true
 
-
 echo
 echo "npm:"
 npm -v || true
-
 
 echo
 echo "pm2:"
 pm2 -v || true
 
-
 echo
 echo "nginx:"
 nginx -v 2>&1 || true
-
 
 echo
 echo "curl:"
 curl --version | head -1 || true
 
+echo
+echo "rclone:"
+rclone version 2>&1 | head -5 || true
 
 echo
 echo "ss:"
 ss --version 2>&1 | head -1 || true
 
 
+################################################
+# QingLong shell
+################################################
+
+echo
+echo "=============================================="
+echo "检查 QingLong"
+echo "=============================================="
+
+if [ ! -d "$QL_DIR" ]; then
+
+    echo "❌ QL_DIR 不存在：$QL_DIR"
+
+    exit 1
+
+fi
+
+echo "✔ QL_DIR=$QL_DIR"
+
+
+if [ -f "$dir_shell/share.sh" ]; then
+
+    echo "✔ share.sh 存在"
+
+else
+
+    echo "⚠️ share.sh 不存在"
+
+fi
+
+
+if [ -f "$dir_shell/env.sh" ]; then
+
+    echo "✔ env.sh 存在"
+
+else
+
+    echo "⚠️ env.sh 不存在"
+
+fi
 
 
 ################################################
-# 加载青龙环境
+# 加载 QingLong 环境
 ################################################
 
 echo
@@ -104,109 +204,137 @@ echo "=============================================="
 
 if [ -f "$dir_shell/share.sh" ]; then
 
-    echo "✔ share.sh 存在"
-
     . "$dir_shell/share.sh"
 
-else
-
-    echo "⚠️ share.sh 不存在"
-
 fi
-
 
 
 if [ -f "$dir_shell/env.sh" ]; then
 
-    echo "✔ env.sh 存在"
-
-
+    # 尽量读取 QingLong 原始环境
     load_ql_envs || true
 
-
-    export BACK_PORT="${ql_port}"
-    export GRPC_PORT="${ql_grpc_port}"
-
-
     echo
-    echo "QingLong 环境变量加载后："
+    echo "QingLong 原始环境："
 
-    echo "ql_port=$ql_port"
-    echo "ql_grpc_port=$ql_grpc_port"
-    echo "BACK_PORT=$BACK_PORT"
-    echo "GRPC_PORT=$GRPC_PORT"
+    echo "ql_port=${ql_port:-}"
+    echo "ql_grpc_port=${ql_grpc_port:-}"
 
-
+    # 导入原始环境
     . "$dir_shell/env.sh"
 
-
+    # 保留原有初始化机制
     import_config "$@" || true
-
 
     fix_config || true
 
-
-else
-
-    echo "⚠️ env.sh 不存在"
-
 fi
 
 
-
-
 ################################################
-# 显示原始 QingLong 配置
+# 强制内部端口
 ################################################
 
 echo
 echo "=============================================="
-echo "QingLong 配置诊断"
+echo "统一 QingLong 内部端口"
 echo "=============================================="
 
 
-if [ -f "$QL_DIR/.env" ]; then
+# =================================================
+# 这里是 V12 最重要的地方
+#
+# 不再：
+#
+# BACK_PORT=5700
+#
+# 而是：
+#
+# PORT=5600
+# BACK_PORT=5600
+# GRPC_PORT=5500
+# =================================================
 
-    echo "===== $QL_DIR/.env ====="
-
-    cat "$QL_DIR/.env" || true
-
-    echo "========================"
-
-else
-
-    echo "⚠️ $QL_DIR/.env 不存在"
-
-fi
+export PORT="$QL_INTERNAL_PORT"
+export BACK_PORT="$QL_INTERNAL_PORT"
+export GRPC_PORT="$QL_GRPC_PORT"
 
 
+echo "PORT=$PORT"
+echo "BACK_PORT=$BACK_PORT"
+echo "GRPC_PORT=$GRPC_PORT"
 
 
 ################################################
-# rclone配置
+# 修改 QingLong .env
 ################################################
 
 echo
 echo "=============================================="
-echo "写入 rclone 配置"
+echo "写入 QingLong .env"
 echo "=============================================="
 
 
-if [ -n "$RCLONE_CONF" ]; then
+touch "$QL_DIR/.env"
 
+
+# 删除可能产生冲突的端口配置
+sed -i '/^PORT=/d' "$QL_DIR/.env"
+sed -i '/^BACK_PORT=/d' "$QL_DIR/.env"
+sed -i '/^GRPC_PORT=/d' "$QL_DIR/.env"
+
+
+# 写入唯一配置
+cat >> "$QL_DIR/.env" <<EOF
+
+# ==================================================
+# beta.blitz internal configuration
+# Generated by entrypoint V12
+# ==================================================
+
+PORT=$QL_INTERNAL_PORT
+BACK_PORT=$QL_INTERNAL_PORT
+GRPC_PORT=$QL_GRPC_PORT
+
+EOF
+
+
+echo
+echo "最终 QingLong .env："
+
+grep -nE '^(PORT|BACK_PORT|GRPC_PORT)=' \
+"$QL_DIR/.env" || true
+
+
+################################################
+# 再次 export
+################################################
+
+export PORT="$QL_INTERNAL_PORT"
+export BACK_PORT="$QL_INTERNAL_PORT"
+export GRPC_PORT="$QL_GRPC_PORT"
+
+
+################################################
+# rclone 配置
+################################################
+
+echo
+echo "=============================================="
+echo "rclone 配置"
+echo "=============================================="
+
+
+if [ -n "${RCLONE_CONF:-}" ]; then
 
     mkdir -p "$HOME/.config/rclone"
 
-
     printf '%s\n' "$RCLONE_CONF" \
-    > "$HOME/.config/rclone/rclone.conf"
-
+        > "$HOME/.config/rclone/rclone.conf"
 
     chmod 600 "$HOME/.config/rclone/rclone.conf"
 
-
     echo "✔ rclone 配置完成"
-
 
 else
 
@@ -215,82 +343,35 @@ else
 fi
 
 
-
-
 ################################################
-# Platform PORT
+# 启动前环境确认
 ################################################
 
 echo
 echo "=============================================="
-echo "Platform PORT"
+echo "QingLong 启动环境最终确认"
 echo "=============================================="
 
 
-echo "Platform PORT=$PORT"
-
-
-if [ -z "$PORT" ]; then
-
-    echo "❌ Platform PORT不存在"
-
-    exit 1
-
-fi
-
-
-
-
-################################################
-# 🔧 V11：固定 QingLong 内部端口
-################################################
-
 echo
-echo "=============================================="
-echo "设置 QingLong 内部端口"
-echo "=============================================="
+echo "Shell environment："
 
-
-echo "目标 QingLong PORT=$QL_INTERNAL_PORT"
-
-
-if [ -f "$QL_DIR/.env" ]; then
-
-
-    if grep -q '^PORT=' "$QL_DIR/.env"; then
-
-        sed -i \
-        "s/^PORT=.*/PORT=$QL_INTERNAL_PORT/" \
-        "$QL_DIR/.env"
-
-    else
-
-        echo "PORT=$QL_INTERNAL_PORT" >> "$QL_DIR/.env"
-
-    fi
-
-
-else
-
-    echo "PORT=$QL_INTERNAL_PORT" > "$QL_DIR/.env"
-
-fi
+env | sort | grep -E \
+'^(PORT|BACK_PORT|GRPC_PORT|QL_|QLPORT|QL_PORT)=' \
+|| true
 
 
 echo
-echo "修改后的 QingLong .env："
+echo "QingLong .env："
 
-grep -nE '^PORT=' "$QL_DIR/.env" || true
-
-
-echo
-echo "✔ QingLong 内部端口设置为 $QL_INTERNAL_PORT"
-
-
+grep -nE \
+'^(PORT|BACK_PORT|GRPC_PORT|QL_|QLPORT|QL_PORT)=' \
+"$QL_DIR/.env" \
+|| true
 
 
 ################################################
-# 🔧 V11：检查 5600 / 5700 当前占用情况
+# 启动前端口检查
 ################################################
 
 echo
@@ -300,27 +381,28 @@ echo "=============================================="
 
 
 echo
-echo "监听端口："
+echo "5600："
 
-ss -ltnp 2>/dev/null || true
-
-
-echo
-echo "5600 占用情况："
-
-ss -ltnp 2>/dev/null | grep ':5600' || echo "5600 当前没有监听"
+ss -ltnp 2>/dev/null | grep ':5600' \
+    || echo "5600 当前没有监听"
 
 
 echo
-echo "Platform PORT $PORT 占用情况："
+echo "5500："
 
-ss -ltnp 2>/dev/null | grep ":$PORT" || echo "$PORT 当前没有监听"
+ss -ltnp 2>/dev/null | grep ':5500' \
+    || echo "5500 当前没有监听"
 
 
+echo
+echo "Platform PORT=$PLATFORM_PORT："
+
+ss -ltnp 2>/dev/null | grep ":$PLATFORM_PORT" \
+    || echo "$PLATFORM_PORT 当前没有监听"
 
 
 ################################################
-# 🔧 V11：检查 PM2
+# PM2 启动前
 ################################################
 
 echo
@@ -332,21 +414,13 @@ echo "=============================================="
 pm2 status || true
 
 
-echo
-echo "PM2 qinglong 详细信息："
-
-pm2 show qinglong || true
-
-
-
-
 ################################################
-# 启动 PM2
+# PM2 启动 QingLong
 ################################################
 
 echo
 echo "=============================================="
-echo "启动 PM2"
+echo "启动 QingLong"
 echo "=============================================="
 
 
@@ -357,18 +431,16 @@ echo
 echo "✔ reload_pm2 执行完成"
 
 
-sleep 3
-
-
+sleep 5
 
 
 ################################################
-# 🔧 V11：PM2 启动后完整诊断
+# PM2 状态
 ################################################
 
 echo
 echo "=============================================="
-echo "PM2 启动后诊断"
+echo "PM2 启动后"
 echo "=============================================="
 
 
@@ -381,125 +453,112 @@ echo "PM2 qinglong："
 pm2 show qinglong || true
 
 
-echo
-echo "PM2 logs 最近 30 行："
-
-pm2 logs qinglong --lines 30 --nostream 2>/dev/null || true
-
-
-
-
 ################################################
-# 🔧 V11：进程诊断
+# PM2 环境
 ################################################
 
 echo
 echo "=============================================="
-echo "进程诊断"
+echo "PM2 实际环境"
 echo "=============================================="
 
 
-echo
-echo "Node / QingLong 进程："
-
-ps aux | grep -E 'node|qinglong' | grep -v grep || true
-
-
-echo
-echo "全部进程："
-
-ps aux || true
-
-
+pm2 env 0 2>&1 | \
+grep -E '^(PORT|BACK_PORT|GRPC_PORT|QL_|QLPORT|QL_PORT)=' \
+|| true
 
 
 ################################################
-# 🔧 V11：实际端口诊断
+# PM2 日志
 ################################################
 
 echo
 echo "=============================================="
-echo "QingLong 实际监听端口"
+echo "PM2 QingLong 最近日志"
+echo "=============================================="
+
+
+# V12：
+# 不再 2>/dev/null
+# 不吞真正的启动错误
+
+pm2 logs qinglong --lines 200 --nostream || true
+
+
+################################################
+# 进程
+################################################
+
+echo
+echo "=============================================="
+echo "QingLong Node 进程"
+echo "=============================================="
+
+
+ps aux | grep -E \
+'node|qinglong' | grep -v grep \
+|| true
+
+
+################################################
+# 全部监听端口
+################################################
+
+echo
+echo "=============================================="
+echo "当前监听端口"
 echo "=============================================="
 
 
 ss -ltnp 2>/dev/null || true
 
 
-echo
-echo "5600："
-
-ss -ltnp 2>/dev/null | grep ':5600' || echo "❌ 5600 没有监听"
-
-
-echo
-echo "$PORT："
-
-ss -ltnp 2>/dev/null | grep ":$PORT" || echo "✔ $PORT 当前没有监听"
-
-
-
-
 ################################################
-# 等待 QingLong
+# 5600 监听等待
 ################################################
 
 echo
 echo "=============================================="
-echo "等待 QingLong 健康检查"
+echo "等待 QingLong 监听 5600"
 echo "=============================================="
 
 
-QL_READY=false
+QL_PORT_READY=false
 
 
-for i in {1..40}
+for i in $(seq 1 40)
 do
 
-    echo "[health] 第 $i/40 次检查"
+    echo
+    echo "[port] 第 $i/40 次检查"
 
+    if ss -ltn 2>/dev/null | grep -q ':5600 '; then
 
-    if curl -fsS \
-    --max-time 5 \
-    "http://127.0.0.1:$QL_INTERNAL_PORT/api/health" \
-    >/tmp/qinglong-health.txt 2>&1
+        echo "✔ 5600 已经监听"
 
-    then
-
-        echo "✔ QingLong 健康检查成功"
-
-        cat /tmp/qinglong-health.txt || true
-
-        QL_READY=true
+        QL_PORT_READY=true
 
         break
 
-    else
-
-        echo "❌ QingLong 尚未响应"
-
-        cat /tmp/qinglong-health.txt || true
-
     fi
 
+
+    echo "❌ 5600 尚未监听"
 
     sleep 2
 
 done
 
 
-
-
 ################################################
-# 🔧 V11：如果 QingLong 未启动，完整诊断
+# 如果 5600 没启动
 ################################################
 
-if [ "$QL_READY" != "true" ]; then
-
+if [ "$QL_PORT_READY" != "true" ]; then
 
     echo
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo "❌ QingLong 在 80 秒内没有通过 5600 健康检查"
+    echo "❌ QingLong 没有监听 5600"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 
 
@@ -508,56 +567,156 @@ if [ "$QL_READY" != "true" ]; then
 
     pm2 status || true
 
+
+    echo
+    echo "========== PM2 SHOW =========="
+
     pm2 show qinglong || true
 
 
     echo
-    echo "========== QingLong 进程 =========="
+    echo "========== PM2 ENV =========="
 
-    ps aux | grep -E 'node|qinglong' | grep -v grep || true
+    pm2 env 0 2>&1 || true
 
 
     echo
-    echo "========== 所有监听端口 =========="
+    echo "========== PM2 LOG =========="
+
+    pm2 logs qinglong --lines 300 --nostream || true
+
+
+    echo
+    echo "========== NODE =========="
+
+    ps aux | grep -E \
+    'node|qinglong' | grep -v grep || true
+
+
+    echo
+    echo "========== PORTS =========="
 
     ss -ltnp 2>/dev/null || true
 
 
     echo
-    echo "========== 5600 =========="
-
-    ss -ltnp 2>/dev/null | grep ':5600' || true
-
-
-    echo
-    echo "========== 5700 =========="
-
-    ss -ltnp 2>/dev/null | grep ':5700' || true
-
-
-    echo
     echo "========== .env =========="
 
-    cat "$QL_DIR/.env" 2>/dev/null || true
+    cat "$QL_DIR/.env" || true
 
 
     echo
-    echo "========== PM2 最近日志 =========="
-
-    pm2 logs qinglong --lines 100 --nostream 2>/dev/null || true
-
-
-    echo
-    echo "=============================================="
-    echo "❌ 停止启动流程"
-    echo "=============================================="
-
+    echo "❌ 不启动 nginx"
 
     exit 1
 
 fi
 
 
+################################################
+# QingLong HTTP 测试
+################################################
+
+echo
+echo "=============================================="
+echo "QingLong HTTP 测试"
+echo "=============================================="
+
+
+QL_HTTP_READY=false
+
+
+echo
+echo "测试：/"
+
+if curl -v \
+    --max-time 5 \
+    "http://127.0.0.1:$QL_INTERNAL_PORT/" \
+    -o /tmp/qinglong-root.txt \
+    2>/tmp/qinglong-root-curl.txt
+then
+
+    echo "✔ QingLong / 响应"
+
+    head -c 500 \
+        /tmp/qinglong-root.txt \
+        || true
+
+    echo
+
+    QL_HTTP_READY=true
+
+else
+
+    echo "⚠️ QingLong / 没有正常响应"
+
+    cat /tmp/qinglong-root-curl.txt \
+        || true
+
+fi
+
+
+echo
+echo "测试：/api/health"
+
+if curl -v \
+    --max-time 5 \
+    "http://127.0.0.1:$QL_INTERNAL_PORT/api/health" \
+    -o /tmp/qinglong-health.txt \
+    2>/tmp/qinglong-health-curl.txt
+then
+
+    echo "✔ /api/health 响应"
+
+    cat /tmp/qinglong-health.txt \
+        || true
+
+else
+
+    echo "⚠️ /api/health 没有正常响应"
+
+    cat /tmp/qinglong-health-curl.txt \
+        || true
+
+fi
+
+
+################################################
+# HTTP 未响应
+################################################
+
+if [ "$QL_HTTP_READY" != "true" ]; then
+
+    echo
+    echo "⚠️ 5600 已监听，但 HTTP 没有正常响应"
+
+    echo
+    echo "========== PM2 LOG =========="
+
+    pm2 logs qinglong --lines 300 --nostream || true
+
+    echo
+    echo "========== PORTS =========="
+
+    ss -ltnp 2>/dev/null || true
+
+    exit 1
+
+fi
+
+
+################################################
+# 到这里 QingLong 已经确认
+################################################
+
+echo
+echo "=============================================="
+echo "✔ QingLong 已确认启动"
+echo "=============================================="
+
+
+echo "Internal HTTP : 127.0.0.1:$QL_INTERNAL_PORT"
+echo "Platform HTTP : $PLATFORM_PORT"
 
 
 ################################################
@@ -566,68 +725,27 @@ fi
 
 echo
 echo "=============================================="
-echo "启动 nginx"
+echo "准备 nginx"
 echo "=============================================="
 
 
-echo "nginx Platform PORT=$PORT"
-echo "QingLong internal PORT=$QL_INTERNAL_PORT"
-
-
-
-
-################################################
-# 🔧 V11：清理 nginx 残留
-################################################
-
-echo
-echo "检查 nginx 旧进程："
-
-ps aux | grep nginx | grep -v grep || echo "没有发现 nginx 进程"
-
-
-echo
-echo "停止旧 nginx："
-
+# 清理旧 nginx
 nginx -s quit 2>/dev/null || true
 
 sleep 1
-
 
 pkill -TERM nginx 2>/dev/null || true
 
 sleep 1
 
-
-echo
-echo "nginx 清理后："
-
-ps aux | grep nginx | grep -v grep || echo "✔ nginx 已清理"
-
-
+pkill -KILL nginx 2>/dev/null || true
 
 
 ################################################
 # nginx 配置
 ################################################
 
-if [ -f /etc/nginx/conf.d/front.conf ]; then
-
-
-    envsubst '$PORT' \
-    < /etc/nginx/conf.d/front.conf \
-    > /tmp/front.conf
-
-
-    mv \
-    /tmp/front.conf \
-    /etc/nginx/conf.d/front.conf
-
-
-    echo "✔ nginx Platform PORT替换完成"
-
-
-else
+if [ ! -f /etc/nginx/conf.d/front.conf ]; then
 
     echo "❌ /etc/nginx/conf.d/front.conf 不存在"
 
@@ -636,20 +754,31 @@ else
 fi
 
 
-
-
-################################################
-# 🔧 V11：显示最终 nginx 配置
-################################################
-
 echo
 echo "=============================================="
-echo "最终 nginx front.conf"
+echo "生成 nginx 配置"
 echo "=============================================="
 
+
+envsubst '$PORT' \
+    < /etc/nginx/conf.d/front.conf \
+    > /tmp/front.conf
+
+
+mv \
+    /tmp/front.conf \
+    /etc/nginx/conf.d/front.conf
+
+
+echo
+echo "最终 nginx 配置："
 
 cat /etc/nginx/conf.d/front.conf
 
+
+################################################
+# nginx test
+################################################
 
 echo
 echo "=============================================="
@@ -660,36 +789,28 @@ echo "=============================================="
 nginx -t
 
 
-
-
 ################################################
-# 🔧 V11：启动 nginx 前再次检查 PORT
+# nginx 启动前
 ################################################
 
 echo
 echo "=============================================="
-echo "nginx 启动前端口检查"
+echo "nginx 启动前端口"
 echo "=============================================="
 
 
 echo
-echo "5600："
+echo "QingLong 5600："
 
-ss -ltnp 2>/dev/null | grep ':5600' || echo "⚠️ 5600 未监听"
-
-
-echo
-echo "Platform PORT=$PORT："
-
-ss -ltnp 2>/dev/null | grep ":$PORT" || echo "✔ $PORT 当前空闲"
+ss -ltnp 2>/dev/null | grep ':5600' \
+    || true
 
 
 echo
-echo "全部监听端口："
+echo "Platform $PLATFORM_PORT："
 
-ss -ltnp 2>/dev/null || true
-
-
+ss -ltnp 2>/dev/null | grep ":$PLATFORM_PORT" \
+    || echo "$PLATFORM_PORT 当前空闲"
 
 
 ################################################
@@ -702,22 +823,21 @@ echo "启动 nginx..."
 nginx
 
 
-sleep 2
-
-
+sleep 3
 
 
 ################################################
-# nginx 启动后检查
+# nginx 检查
 ################################################
 
 echo
 echo "=============================================="
-echo "nginx 启动后诊断"
+echo "nginx 启动后"
 echo "=============================================="
 
 
-ps aux | grep nginx | grep -v grep || true
+ps aux | grep nginx | grep -v grep \
+    || true
 
 
 echo
@@ -726,163 +846,183 @@ echo "监听端口："
 ss -ltnp 2>/dev/null || true
 
 
-echo
-echo "Platform PORT=$PORT："
-
-ss -ltnp 2>/dev/null | grep ":$PORT" || true
-
+################################################
+# Platform HTTP
+################################################
 
 echo
-echo "测试 nginx："
-
-curl -fsS \
---max-time 10 \
-"http://127.0.0.1:$PORT/" \
--o /tmp/nginx-test.html \
-|| true
+echo "=============================================="
+echo "Platform HTTP 测试"
+echo "=============================================="
 
 
-if [ -f /tmp/nginx-test.html ]; then
+if curl -fsS \
+    --max-time 10 \
+    "http://127.0.0.1:$PLATFORM_PORT/" \
+    -o /tmp/nginx-test.html
+then
 
-    echo "✔ nginx HTTP 测试完成"
+    echo "✔ nginx Platform HTTP 测试成功"
 
-    head -c 500 /tmp/nginx-test.html || true
+    head -c 500 \
+        /tmp/nginx-test.html \
+        || true
 
     echo
 
 else
 
-    echo "⚠️ nginx HTTP 测试失败"
+    echo "❌ nginx Platform HTTP 测试失败"
+
+    echo
+    echo "========== nginx error.log =========="
+
+    tail -100 /var/log/nginx/error.log \
+        2>/dev/null || true
+
+    exit 1
 
 fi
-
-
 
 
 ################################################
 # 管理员初始化
 ################################################
 
-sleep 5
-
-
-if [ -n "$ADMIN_USERNAME" ] && \
-   [ -n "$ADMIN_PASSWORD" ]
-
+if [ -n "${ADMIN_USERNAME:-}" ] && \
+   [ -n "${ADMIN_PASSWORD:-}" ]
 then
 
-
-echo
-echo "########## 初始化管理员 ##########"
-
-
-curl -sS \
-"http://127.0.0.1:$QL_INTERNAL_PORT/api/user/init?t=$(date +%s)" \
--X PUT \
--H "Content-Type: application/json;charset=UTF-8" \
---data \
-"{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
-| jq || true
+    echo
+    echo "=============================================="
+    echo "管理员初始化"
+    echo "=============================================="
 
 
-fi
-
-
-
-
-################################################
-# rclone恢复
-################################################
-
-if [ -n "$RCLONE_CONF" ]; then
-
-
-echo
-echo "########## rclone恢复 ##########"
-
-
-if rclone ls "$REMOTE_FOLDER" >/dev/null 2>&1
-
-then
-
-
-mkdir -p "$QL_DIR/.tmp/data"
-
-
-COUNT=$(rclone ls "$REMOTE_FOLDER" | wc -l)
-
-
-if [ "$COUNT" -gt 0 ]
-
-then
-
-
-rclone sync \
-"$REMOTE_FOLDER" \
-"$QL_DIR/.tmp/data"
-
-
-real_time=true ql reload data
-
-
-echo "✔ 数据恢复完成"
-
+    curl -sS \
+        --max-time 20 \
+        "http://127.0.0.1:$QL_INTERNAL_PORT/api/user/init?t=$(date +%s)" \
+        -X PUT \
+        -H "Content-Type: application/json;charset=UTF-8" \
+        --data \
+        "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
+        | jq || true
 
 else
 
-echo "首次安装，没有备份"
+    echo
+    echo "没有设置 ADMIN_USERNAME / ADMIN_PASSWORD"
 
 fi
 
+
+################################################
+# rclone 数据恢复
+################################################
+
+if [ -n "${RCLONE_CONF:-}" ]; then
+
+    echo
+    echo "=============================================="
+    echo "rclone 数据恢复"
+    echo "=============================================="
+
+
+    if [ -n "${REMOTE_FOLDER:-}" ]; then
+
+        echo "REMOTE_FOLDER=$REMOTE_FOLDER"
+
+
+        if rclone ls "$REMOTE_FOLDER" \
+            >/dev/null 2>&1
+        then
+
+            mkdir -p "$QL_DIR/.tmp/data"
+
+
+            COUNT=$(
+                rclone ls "$REMOTE_FOLDER" 2>/dev/null \
+                | wc -l
+            )
+
+
+            if [ "$COUNT" -gt 0 ]; then
+
+                echo "发现 $COUNT 个远程文件"
+
+                rclone sync \
+                    "$REMOTE_FOLDER" \
+                    "$QL_DIR/.tmp/data"
+
+
+                real_time=true ql reload data
+
+
+                echo "✔ 数据恢复完成"
+
+            else
+
+                echo "远程备份为空"
+
+            fi
+
+        else
+
+            echo "⚠️ rclone 连接失败"
+
+        fi
+
+    else
+
+        echo "⚠️ REMOTE_FOLDER 未设置"
+
+    fi
 
 else
 
-echo "⚠️ rclone连接失败"
+    echo "没有 RCLONE_CONF"
 
 fi
 
 
-fi
-
-
-
-
 ################################################
-# notify
+# 通知
 ################################################
 
-if [ -n "$NOTIFY_CONFIG" ]; then
+if [ -n "${NOTIFY_CONFIG:-}" ]; then
+
+    echo
+    echo "=============================================="
+    echo "通知配置"
+    echo "=============================================="
 
 
-echo
-echo "########## 通知 ##########"
+    python /notify.py || true
 
 
-python /notify.py || true
+    sleep 10
 
 
-sleep 10
+    if [ -f "$QL_DIR/shell/api.sh" ]; then
 
+        source "$QL_DIR/shell/api.sh"
 
-source "$QL_DIR/shell/api.sh"
+        notify_api \
+            "青龙服务启动通知" \
+            "青龙面板成功启动" \
+            || true
 
-
-notify_api \
-"青龙服务启动通知" \
-"青龙面板成功启动"
-
+    fi
 
 else
 
-echo "没有通知配置"
+    echo "没有通知配置"
 
 fi
 
 
-
-
 ################################################
-# 最终状态
+# 最终检查
 ################################################
 
 echo
@@ -892,38 +1032,103 @@ echo "=============================================="
 
 
 echo
-echo "5600 = QingLong 内部："
+echo "QingLong 5600："
 
-ss -ltnp 2>/dev/null | grep ':5600' || echo "❌ 5600 未监听"
-
-
-echo
-echo "$PORT = nginx 平台端口："
-
-ss -ltnp 2>/dev/null | grep ":$PORT" || echo "❌ $PORT 未监听"
+ss -ltnp 2>/dev/null | grep ':5600' \
+    || echo "❌ 5600 未监听"
 
 
 echo
-echo "全部监听端口："
+echo "Platform $PLATFORM_PORT："
+
+ss -ltnp 2>/dev/null | grep ":$PLATFORM_PORT" \
+    || echo "❌ $PLATFORM_PORT 未监听"
+
+
+echo
+echo "全部监听："
 
 ss -ltnp 2>/dev/null || true
 
 
+################################################
+# PM2 最终
+################################################
+
 echo
 echo "=============================================="
-echo "最终 PM2 状态"
+echo "最终 PM2"
 echo "=============================================="
 
 
 pm2 status || true
 
 
+################################################
+# 最终健康检查
+################################################
+
 echo
 echo "=============================================="
-echo "QingLong + nginx 启动完成"
+echo "最终健康检查"
 echo "=============================================="
 
 
+if curl -fsS \
+    --max-time 10 \
+    "http://127.0.0.1:$QL_INTERNAL_PORT/" \
+    >/dev/null
+then
+
+    echo "✔ QingLong 内部 HTTP 正常"
+
+else
+
+    echo "❌ QingLong 内部 HTTP 异常"
+
+fi
+
+
+if curl -fsS \
+    --max-time 10 \
+    "http://127.0.0.1:$PLATFORM_PORT/" \
+    >/dev/null
+then
+
+    echo "✔ Platform nginx HTTP 正常"
+
+else
+
+    echo "❌ Platform nginx HTTP 异常"
+
+fi
+
+
+################################################
+# 完成
+################################################
+
+echo
+echo "=============================================="
+echo "🔥 QingLong + nginx V12 启动完成"
+echo "=============================================="
+
+echo
+echo "架构："
+echo
+echo "beta.blitz PORT=$PLATFORM_PORT"
+echo "        ↓"
+echo "      nginx"
+echo "        ↓"
+echo "127.0.0.1:$QL_INTERNAL_PORT"
+echo "        ↓"
+echo "    QingLong"
+echo
+echo "=============================================="
+
+
+################################################
 # 保持容器运行
+################################################
 
 tail -f /dev/null
