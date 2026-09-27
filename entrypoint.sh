@@ -1,9 +1,11 @@
 #!/bin/bash
 
-echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-RENDER-FINAL-V8 🔥🔥🔥"
+
+echo "🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-BLITZ-V1 🔥"
 
 
 set -e
+
 
 
 export PATH="$HOME/bin:$PATH"
@@ -19,6 +21,7 @@ QL_DIR=${QL_DIR:-/ql}
 dir_shell="$QL_DIR/shell"
 
 
+
 echo "HOME=$HOME"
 echo "USER=$(whoami)"
 
@@ -28,6 +31,7 @@ echo "USER=$(whoami)"
 ################################################
 # 加载青龙环境
 ################################################
+
 
 if [ -f "$dir_shell/share.sh" ]; then
 
@@ -41,6 +45,7 @@ fi
 
 
 
+
 if [ -f "$dir_shell/env.sh" ]; then
 
 
@@ -48,10 +53,13 @@ if [ -f "$dir_shell/env.sh" ]; then
 
 
     export BACK_PORT="${ql_port}"
+
     export GRPC_PORT="${ql_grpc_port}"
 
 
+
     . "$dir_shell/env.sh"
+
 
 
     import_config "$@" || true
@@ -60,7 +68,9 @@ if [ -f "$dir_shell/env.sh" ]; then
     fix_config || true
 
 
+
 fi
+
 
 
 
@@ -71,7 +81,7 @@ fi
 
 
 echo
-echo "======================写入 rclone 配置========================"
+echo "====================== rclone 配置 ======================"
 
 
 
@@ -93,10 +103,12 @@ if [ -n "$RCLONE_CONF" ]; then
     echo "✔ rclone 配置完成"
 
 
+
 else
 
 
     echo "没有检测到 RCLONE_CONF"
+
 
 
 fi
@@ -106,21 +118,86 @@ fi
 
 
 ################################################
-# Render PORT
+# 数据恢复
 ################################################
 
 
+if [ -n "$RCLONE_CONF" ] && [ -n "$REMOTE_FOLDER" ]; then
+
+
 echo
-
-echo "Render PORT=$PORT"
-
+echo "====================== rclone 数据恢复 ======================"
 
 
-if [ -z "$PORT" ]; then
 
-    echo "❌ Render PORT不存在"
+DATA_EMPTY=false
 
-    exit 1
+
+
+if [ ! -d "$QL_DIR/data" ]; then
+
+    DATA_EMPTY=true
+
+else
+
+
+    COUNT=$(find "$QL_DIR/data" -type f | wc -l)
+
+
+    if [ "$COUNT" -eq 0 ]; then
+
+        DATA_EMPTY=true
+
+    fi
+
+
+fi
+
+
+
+
+
+if [ "$DATA_EMPTY" = true ]; then
+
+
+
+    echo "检测到空数据目录，开始恢复"
+
+
+
+    mkdir -p "$QL_DIR/data"
+
+
+
+    rclone copy \
+    "$REMOTE_FOLDER" \
+    "$QL_DIR/data" \
+    --progress
+
+
+
+    echo "✔ 数据恢复完成"
+
+
+
+else
+
+
+
+    echo "检测到已有数据，跳过恢复"
+
+
+
+fi
+
+
+
+else
+
+
+echo "未配置 rclone 恢复"
+
+
 
 fi
 
@@ -143,7 +220,7 @@ if [ -f "$QL_DIR/.env" ]; then
 
 
 
-    echo "✔ 青龙固定端口5700"
+    echo "✔ 青龙端口固定 5700"
 
 
 
@@ -154,17 +231,16 @@ fi
 
 
 ################################################
-# 启动PM2
+# 启动 PM2
 ################################################
 
 
 echo
 
-echo "[INFO] 启动 PM2"
+echo "====================== 启动 QingLong ======================"
 
 
 
-# 青龙官方函数
 reload_pm2
 
 
@@ -176,12 +252,16 @@ reload_pm2
 ################################################
 
 
+echo
+
 echo "等待青龙启动..."
 
 
 
 for i in {1..40}
+
 do
+
 
 
     if curl -sf \
@@ -190,69 +270,22 @@ do
 
     then
 
+
         echo "✔ 青龙启动完成"
+
 
         break
 
+
     fi
+
 
 
     sleep 2
 
 
+
 done
-
-
-
-
-
-################################################
-# nginx
-################################################
-
-
-echo
-
-echo "======================启动 nginx========================"
-
-
-
-if [ -f /etc/nginx/conf.d/front.conf ]; then
-
-
-
-    envsubst '$PORT' \
-    < /etc/nginx/conf.d/front.conf \
-    > /tmp/front.conf
-
-
-
-    mv \
-    /tmp/front.conf \
-    /etc/nginx/conf.d/front.conf
-
-
-
-    echo "✔ nginx PORT替换完成"
-
-
-
-fi
-
-
-
-
-
-nginx -t
-
-
-
-nginx -s reload 2>/dev/null || nginx
-
-
-
-echo "✔ nginx启动完成"
-
 
 
 
@@ -274,6 +307,7 @@ if [ -n "$ADMIN_USERNAME" ] && \
 then
 
 
+
 echo
 
 echo "########## 初始化管理员 ##########"
@@ -290,86 +324,14 @@ curl -s \
 
 
 
-fi
-
-
-
-
-
-
-
-################################################
-# rclone恢复
-################################################
-
-
-if [ -n "$RCLONE_CONF" ]; then
-
-
-echo
-
-echo "########## rclone恢复 ##########"
-
-
-
-if rclone ls "$REMOTE_FOLDER" >/dev/null 2>&1
-
-then
-
-
-
-mkdir -p "$QL_DIR/.tmp/data"
-
-
-
-COUNT=$(rclone ls "$REMOTE_FOLDER" | wc -l)
-
-
-
-if [ "$COUNT" -gt 0 ]
-
-then
-
-
-
-rclone sync \
-"$REMOTE_FOLDER" \
-"$QL_DIR/.tmp/data"
-
-
-
-real_time=true ql reload data
-
-
-
-echo "✔ 数据恢复完成"
-
-
-
 else
 
 
-echo "首次安装，没有备份"
+echo "未设置管理员变量"
 
 
 
 fi
-
-
-
-else
-
-
-echo "⚠️ rclone连接失败"
-
-
-
-fi
-
-
-
-fi
-
 
 
 
@@ -377,16 +339,17 @@ fi
 
 
 ################################################
-# notify
+# 通知
 ################################################
 
 
 if [ -n "$NOTIFY_CONFIG" ]; then
 
 
+
 echo
 
-echo "########## 通知 ##########"
+echo "########## 启动通知 ##########"
 
 
 
@@ -394,7 +357,7 @@ python /notify.py || true
 
 
 
-sleep 10
+sleep 5
 
 
 
@@ -404,7 +367,7 @@ source "$QL_DIR/shell/api.sh"
 
 notify_api \
 "青龙服务启动通知" \
-"青龙面板成功启动"
+"Blitz QingLong 已启动"
 
 
 
@@ -421,10 +384,8 @@ fi
 
 
 
-
-
 ################################################
-# 最终状态
+# 状态检查
 ################################################
 
 
@@ -435,7 +396,7 @@ echo "########## 端口检测 ##########"
 
 
 (ss -tlnp 2>/dev/null || true) \
-| grep -E "5700|$PORT" || true
+| grep 5700 || true
 
 
 
@@ -445,12 +406,13 @@ echo
 
 echo "================================"
 
-echo "青龙主程序运行完成"
+echo "QingLong Blitz 启动完成"
 
 echo "================================"
 
 
 
-# 保持Render容器运行
+
+# 保持容器运行
 
 tail -f /dev/null
