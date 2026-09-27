@@ -1,7 +1,7 @@
 #!/bin/bash
 
-echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-RENDER-FINAL-V9 🔥🔥🔥"
-# 🔧 修改：版本号更新为 V9
+echo "🔥🔥🔥 ENTRYPOINT VERSION: 2026-09-27-QINGLONG-2.22.0-DEBIAN-RENDER-FINAL-V10 🔥🔥🔥"
+# 🔧 PORT修改：版本更新为 V10
 
 
 set -e
@@ -113,7 +113,6 @@ fi
 echo
 
 echo "Platform PORT=$PORT"
-# 🔧 修改：原来的 "Render PORT=$PORT" 改成平台无关的写法
 
 
 
@@ -131,24 +130,47 @@ fi
 
 
 ################################################
-# 固定青龙内部端口
+# 🔧 PORT修改：QingLong 内部端口
 ################################################
 
-# 🔧 修改：
-# QingLong 不再使用平台 PORT。
-# 平台 PORT 留给 nginx。
-# QingLong 固定使用 5800，避免与 Blitz / Render 的 PORT 冲突。
+# 🔧 PORT修改：
+# QingLong 使用容器内部端口 5600。
+#
+# $PORT 是 Render / Blitz 等平台提供的公网入口端口，
+# 只能交给 nginx 使用。
+#
+# 架构：
+#
+#   Platform $PORT
+#          ↓
+#       nginx
+#          ↓
+#   QingLong :5600
+#
+# 不再把平台 PORT 写入 QingLong。
+
+QL_INTERNAL_PORT=5600
+
+echo "✔ QingLong 内部端口=$QL_INTERNAL_PORT"
+
+
+
+# 🔧 PORT修改：
+# 将 QingLong 自己的 PORT 固定为内部端口 5600。
+#
+# 注意：
+# 这里不能再使用 $PORT。
 
 if [ -f "$QL_DIR/.env" ]; then
 
 
     sed -i \
-    "s/^PORT=.*/PORT=5800/" \
+    "s/^PORT=.*/PORT=$QL_INTERNAL_PORT/" \
     "$QL_DIR/.env"
 
 
 
-    echo "✔ 青龙固定内部端口 5800"
+    echo "✔ QingLong 固定内部端口 $QL_INTERNAL_PORT"
 
 
 
@@ -189,8 +211,11 @@ for i in {1..40}
 do
 
 
+    # 🔧 PORT修改：
+    # QingLong 健康检查改为内部端口 5600。
+
     if curl -sf \
-    http://127.0.0.1:5800/api/health \
+    "http://127.0.0.1:$QL_INTERNAL_PORT/api/health" \
     >/dev/null 2>&1
 
     then
@@ -225,6 +250,12 @@ echo "======================启动 nginx========================"
 if [ -f /etc/nginx/conf.d/front.conf ]; then
 
 
+
+    # $PORT 只用于 nginx。
+    #
+    # 🔧 PORT修改：
+    # 不修改 QingLong 的端口，
+    # 这里只把平台 PORT 替换到 nginx listen。
 
     envsubst '$PORT' \
     < /etc/nginx/conf.d/front.conf \
@@ -285,8 +316,11 @@ echo "########## 初始化管理员 ##########"
 
 
 
+# 🔧 PORT修改：
+# 管理员 API 改为访问 QingLong 内部端口 5600。
+
 curl -s \
-"http://127.0.0.1:5800/api/user/init?t=$(date +%s)" \
+"http://127.0.0.1:$QL_INTERNAL_PORT/api/user/init?t=$(date +%s)" \
 -X PUT \
 -H "Content-Type: application/json;charset=UTF-8" \
 --data \
@@ -439,9 +473,13 @@ echo "########## 端口检测 ##########"
 
 
 
+# 🔧 PORT修改：
+# 同时检测：
+#   5600 = QingLong 内部端口
+#   $PORT = nginx 对外端口
+
 (ss -tlnp 2>/dev/null || true) \
-| grep -E "5800|$PORT" || true
-# 🔧 修改：这里检测 QingLong 5800，不再检测固定的 5700
+| grep -E "$QL_INTERNAL_PORT|$PORT" || true
 
 
 
